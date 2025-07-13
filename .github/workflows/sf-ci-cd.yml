@@ -24,7 +24,7 @@ jobs:
       - name: Authenticate Dev Hub
         run: |
           echo "${{ secrets.SF_PROD_AUTH_URL  }}" >authfile.txt
-          sf org login sfdx-url --sfdx-url-file authfile.txt --alias DevHub
+          sf org login sfdx-url --sfdx-url-file authfile.txt --alias DevHub --set-default-dev-hub
 
       - name: Create Scratch Org
         run: sf org create scratch --definition-file config/project-scratch-def.json --alias ScratchOrg --duration-days 1 --set-default
