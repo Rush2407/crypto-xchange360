@@ -1,78 +1,47 @@
-name: Salesforce CI/CD Pipeline
+name: Salesforce Advanced CI/CD Pipeline
 
 on: 
   push:
     branches:
-      - dev
-      - feature/**
-  pull_request:
-    branches:
       - main
 
-env:
-  TEST_COVERAGE_THRESHOLD: 75
-
-jobs:
-  validate-dev:
-    name: Validate Code in Production Org
+jobs: 
+  salesforce-ci:
     runs-on: ubuntu-latest
-    if: github.ref != 'refs/heads/main'
+  
+    env:
+     TEST_COVERAGE_THRESHOLD: 75
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install Java & PMD
+      - name: Install Salesforce CLI 
         run: |
-          echo "Installing Java (required for PMD)..."
-          sudo apt-get update
-          sudo apt-get install default-jre -y
-          java -version
-
-          echo "Installing PMD..."
-          if [  ! -d "pmd/pmd-bin-6.55.0" ]; then
-            echo "Downloading PMD..."
-            curl -LJO https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
-            unzip pmd-bin-6.55.0.zip -d pmd
-          else
-            echo "PMD already Present."
-          fi
-
-          export PATH=$PATH:$(pwd)/pmd/pmd-bin-6.55.0/bin
-
-      - name: Install Salesforce CLI
+          npm install @salesforce/cli --global
+          sf --version
+      
+      - name: Authenticate Dev Hub
         run: |
-          if ! sf --version &>/dev/null; then
-            echo "Installing Salesforce CLI..."
-            npm install @salesforce/cli --global
-          else
-            echo "Salesforce CLI already installed."
-          fi
+          echo "${{ secrets.SF_PROD_AUTH_URL  }}" >authfile.txt
+          sf org login sfdx-url --sfdx-url-file authfile.txt --alias DevHub
 
-      - name: Authenticate Production Org
-        run: |
-          echo "${{ secrets.SF_PROD_AUTH_URL }}" > authfile.txt
-          sf org login sfdx-url --sfdx-url-file authfile.txt --alias Prod
+      - name: Create Scratch Org
+        run: sf org create scratch --definition-file config/project-scratch-def.json --alias ScratchOrg --duration-days 1 --set-default
+      
+      - name: Push Source
+        run: sf project deploy start --target-org ScratchOrg
 
       - name: Run PMD Analysis
         run: |
-          echo "Running PMD static analysis..."
-          ./pmd/pmd-bin-6.55.0/bin/run.sh pmd \
-            -d force-app/main/default/classes \
-            -R category/apex/design.xml/UnusedPrivateMethod \
-            -f text
+          wget https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
+          unzip pmd-bin-6.55/0.zip
+          pmd-bin-6.55.0/bin/run.sh pmd -d force-app -R apex-rulesset.xml -f text
 
       - name: Run Apex Tests
         run: |
-          sf apex run test --target-org Prod --code-coverage --result-format json --output-dir test-results --wait 60 --synchronous
-
-          result_file=$(ls test-results/test-run-result-*.json | head -n 1)
-          if [ ! -f "$result_file" ]; then
-            echo "Test result file not found! Ensure the test run succeeded and produced output."
-            exit 1
-          fi
-
-          COVERAGE=$(jq '.result.summary.codeCoverage.coverage' "$result_file")
+          sf apex run test --target-org ScratchOrg --code-coverage --result-format json --output-dir test-results
+          COVERAGE=$(jq '.result.summary.codeCoverage.coverage' test-results/test-result.json)
           echo "Test Coverage: $COVERAGE%"
           if (( $(echo "$COVERAGE < $TEST_COVERAGE_THRESHOLD" | bc -l) )); then
             echo "Code coverage ($COVERAGE%) is below threshold ($TEST_COVERAGE_THRESHOLD%)"
@@ -81,30 +50,8 @@ jobs:
             echo "Code coverage meets threshold."
           fi
 
-  deploy-prod:
-    name: Deploy Code to Production
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Install Salesforce CLI 
-        run: |
-          if ! sf --version &>/dev/null;
-            echo "Installing Salesforce CLI..."
-            npm install @salesforce/cli --global
-          else
-            echo "Salesfore CLI already installed."
-          fi
-      
-      - name: Authenticate Production Org
-        run: |
-          echo "${{ secrets.SF_PROD_AUTH_URL }}" > authfile.txt
-          sf org login sfdx-url --sfdx-url-file authfile.txt --alias Prod
-      
       - name: Deploy Code to Production
-        run: |
-          echo "Deploying code to production..."
-          sf project deploy start --target-org Prod
+        run: sf project deploy start --target-org DevHub
+
+      - name: Delete Scratch Org
+        run: sf org delete scratch --target-org ScratchOrg --no-prompt
