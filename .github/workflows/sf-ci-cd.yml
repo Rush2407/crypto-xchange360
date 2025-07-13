@@ -64,7 +64,7 @@ jobs:
 
       - name: Run Apex Tests
         run: |
-          sf apex run test --target-org Prod --code-coverage --result-format json --output-dir test-results
+          sf apex run test --target-org Prod --code-coverage --result-format json --output-dir test-results --wait 60 --synchronous
           COVERAGE=$(jq '.result.summary.codeCoverage.coverage' test-results/test-result.json)
           echo "Test Coverage: $COVERAGE%"
           if (( $(echo "$COVERAGE < $TEST_COVERAGE_THRESHOLD" | bc -l) )); then
