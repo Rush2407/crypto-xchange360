@@ -1,0 +1,92 @@
+name: Salesforce CI/CD Pipeline
+
+on: 
+  push:
+    branches:
+      - dev
+      - feature/**
+  pull_request:
+    branches:
+      - main
+
+env:
+  TEST_COVERAGE_THRESHOLD: 75
+
+jobs:
+  validate-dev:
+    name: Validate Code in Production Org
+    runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/main'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Salesforce CLI & PMD
+        run: |
+          if ! sf --version &>/dev/null; then
+            echo "Installing Salesforce CLI..."
+            npm install @salesforce/cli --global
+          else
+            echo "Salesforce CLI already installed."
+          fi
+
+          if [ ! -d "pmd-bin-6.55.0.zip" ]; then
+            echo "Downloading PMD..."
+            curl -LJO https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
+            unzip pmd-bin-6.55.0.zip -d pmd
+          else
+            echo "PMD already present."
+          fi
+
+          export PATH=$PATH:$(pwd)/pmd/pmd-bin-6.55.0/bin
+
+      - name: Authenticate Production Org
+        run: |
+          echo "${{ secrets.SF_PROD_AUTH_URL }}" > authfile.txt
+          sf org login sfdx-url --sfdx-url-file authfile.txt --alias Prod
+
+      - name: Run PMD Analysis
+        run: |
+          pmd/bin/run.sh pmd \
+            -d force-app/main/default/classes \
+            -R apex-apexunit \
+            -f text
+
+      - name: Run Apex Tests
+        run: |
+          sf apex run test --target-org Prod --code-coverage --result-format json --output-dir test-results
+          COVERAGE=$(jq '.result.summary.codeCoverage.coverage' test-results/test-result.json)
+          echo "Test Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < $TEST_COVERAGE_THRESHOLD" | bc -l) )); then
+            echo "Code coverage ($COVERAGE%) is below threshold ($TEST_COVERAGE_THRESHOLD%)"
+            exit 1
+          else
+            echo "Code coverage meets threshold."
+          fi
+
+  deploy-prod:
+    name: Deploy Code to Production
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Salesforce CLI 
+        run: |
+          if ! sf --version &>/dev/null;
+            echo "Installing Salesforce CLI..."
+            npm install @salesforce/cli --global
+          else
+            echo "Salesfore CLI already installed."
+          fi
+      
+      - name: Authenticate Production Org
+        run: |
+          echo "${{ secrets.SF_PROD_AUTH_URL }}" > authfile.txt
+          sf org login sfdx-url --sfdx-url-file authfile.txt --alias Prod
+      
+      - name: Deploy Code to Production
+        run: sf project deploy start --target-org Prod
