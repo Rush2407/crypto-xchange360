@@ -1,0 +1,57 @@
+name: Salesforce Advanced CI/CD Pipeline
+
+on: 
+  push:
+    branches:
+      - main
+
+jobs: 
+  salesforce-ci:
+    runs-on: ubuntu-latest
+  
+    env:
+     TEST_COVERAGE_THRESHOLD: 75
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install Salesforce CLI 
+        run: |
+          npm install @salesforce/cli --global
+          sf --version
+      
+      - name: Authenticate Dev Hub
+        run: |
+          echo "${{ secrets.SF_PROD_AUTH_URL  }}" >authfile.txt
+          sf org login sfdx-url --sfdx-url-file authfile.txt --alias DevHub
+
+      - name: Create Scratch Org
+        run: sf org create scratch --definition-file config/project-scratch-def.json --alias ScratchOrg --duration-days 1 --set-default
+      
+      - name: Push Source
+        run: sf project deploy start --target-org ScratchOrg
+
+      - name: Run PMD Analysis
+        run: |
+          wget https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
+          unzip pmd-bin-6.55/0.zip
+          pmd-bin-6.55.0/bin/run.sh pmd -d force-app -R apex-rulesset.xml -f text
+
+      - name: Run Apex Tests
+        run: |
+          sf apex run test --target-org ScratchOrg --code-coverage --result-format json --output-dir test-results
+          COVERAGE=$(jq '.result.summary.codeCoverage.coverage' test-results/test-result.json)
+          echo "Test Coverage: $COVERAGE%"
+          if (( $(echo "$COVERAGE < $TEST_COVERAGE_THRESHOLD" | bc -l) )); then
+            echo "Code coverage ($COVERAGE%) is below threshold ($TEST_COVERAGE_THRESHOLD%)"
+            exit 1
+          else
+            echo "Code coverage meets threshold."
+          fi
+
+      - name: Deploy Code to Production
+        run: sf project deploy start --target-org DevHub
+
+      - name: Delete Scratch Org
+        run: sf org delete scratch --target-org ScratchOrg --no-prompt
