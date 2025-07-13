@@ -65,7 +65,14 @@ jobs:
       - name: Run Apex Tests
         run: |
           sf apex run test --target-org Prod --code-coverage --result-format json --output-dir test-results --wait 60 --synchronous
-          COVERAGE=$(jq '.result.summary.codeCoverage.coverage' test-results/test-result.json)
+
+          result_file=$(ls test-results/test-run-result-*.json | head -n 1)
+          if [ ! -f "$result_file" ]; then
+            echo "Test result file not found! Ensure the test run succeeded and produced output."
+            exit 1
+          fi
+
+          COVERAGE=$(jq '.result.summary.codeCoverage.coverage' "$result_file")
           echo "Test Coverage: $COVERAGE%"
           if (( $(echo "$COVERAGE < $TEST_COVERAGE_THRESHOLD" | bc -l) )); then
             echo "Code coverage ($COVERAGE%) is below threshold ($TEST_COVERAGE_THRESHOLD%)"
