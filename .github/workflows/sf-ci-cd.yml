@@ -22,7 +22,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install Salesforce CLI & PMD
+      - name: Install Java & PMD
+        run: |
+          echo "Installing Java (required for PMD)..."
+          sudo apt-get update
+          sudo apt-get install default-jre -y
+          java -version
+
+          echo "Installing PMD..."
+          if [  ! -d "pmd/pmd-bin-6.55.0" ]; then
+            echo "Downloading PMD..."
+            curl -LJO https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
+            unzip pmd-bin-6.55.0.zip -d pmd
+          else
+            echo "PMD already Present."
+          fi
+
+          export PATH=$PATH:$(pwd)/pmd/pmd-bin-6.55.0/bin
+
+      - name: Install Salesforce CLI
         run: |
           if ! sf --version &>/dev/null; then
             echo "Installing Salesforce CLI..."
@@ -31,16 +49,6 @@ jobs:
             echo "Salesforce CLI already installed."
           fi
 
-          if [ ! -d "pmd-bin-6.55.0.zip" ]; then
-            echo "Downloading PMD..."
-            curl -LJO https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
-            unzip pmd-bin-6.55.0.zip -d pmd
-          else
-            echo "PMD already present."
-          fi
-
-          export PATH=$PATH:$(pwd)/pmd/pmd-bin-6.55.0/bin
-
       - name: Authenticate Production Org
         run: |
           echo "${{ secrets.SF_PROD_AUTH_URL }}" > authfile.txt
@@ -48,9 +56,10 @@ jobs:
 
       - name: Run PMD Analysis
         run: |
-          pmd/bin/run.sh pmd \
+          echo "Running PMD static analysis..."
+          pmd \
             -d force-app/main/default/classes \
-            -R apex-apexunit \
+            -R category/apex/design.xml/UnusedPrivateMethod \
             -f text
 
       - name: Run Apex Tests
@@ -89,4 +98,6 @@ jobs:
           sf org login sfdx-url --sfdx-url-file authfile.txt --alias Prod
       
       - name: Deploy Code to Production
-        run: sf project deploy start --target-org Prod
+        run: |
+          echo "Deploying code to production..."
+          sf project deploy start --target-org Prod
